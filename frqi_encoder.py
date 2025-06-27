@@ -148,6 +148,12 @@ class FRQIEncoder:
             for i in range(self.image_size):
                 for j in range(self.image_size):
                     img[i, j] = (i + j) % 2
+        elif pattern == "border":
+            # Frame pattern - edges around perimeter
+            img[0, :] = 1.0  # Top
+            img[-1, :] = 1.0  # Bottom
+            img[:, 0] = 1.0  # Left
+            img[:, -1] = 1.0  # Right
         else:
             raise ValueError(f"Unknown pattern: {pattern}")
 
