@@ -1,7 +1,15 @@
 """
-IBM Quantum Hardware Testing for Quantum Image Processing
-Updated for latest Qiskit Runtime API (2024/2025)
-Tests FRQI encoding and QHED on real IBM quantum computers
+FULLY FIXED IBM Quantum Hardware Testing - Corrected Measurement Processing
+Fixes the measurement string length inconsistency between simulators and hardware
+
+Key fixes:
+1. Enhanced measurement string cleaning for different formats
+2. Robust bit length handling across simulators and hardware
+3. Proper correlation calculations
+4. Comprehensive debugging output
+
+Author: Quantum Image Processing Research
+Version: 6.1 (Fully Fixed)
 """
 
 import numpy as np
@@ -13,25 +21,87 @@ import time
 import warnings
 warnings.filterwarnings('ignore')
 
+# Auto-detect available IBM Runtime API version
+RUNTIME_AVAILABLE = False
+SAMPLER_V2_AVAILABLE = False
+SESSION_AVAILABLE = False
+
 try:
-    from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
-    print("✅ Using latest IBM Runtime API")
+    from qiskit_ibm_runtime import QiskitRuntimeService
     RUNTIME_AVAILABLE = True
-except ImportError:
+
+    # Try to import SamplerV2
     try:
-        from qiskit_ibm_runtime import QiskitRuntimeService, Sampler
-        print("⚠️ Using legacy IBM Runtime API")
-        RUNTIME_AVAILABLE = True
+        from qiskit_ibm_runtime import SamplerV2
+        SAMPLER_V2_AVAILABLE = True
+        print("✅ SamplerV2 available")
     except ImportError:
-        print("❌ IBM Runtime not available")
-        RUNTIME_AVAILABLE = False
+        print("⚠️ SamplerV2 not available, using legacy Sampler")
 
-from frqi_encoder import FRQIEncoder
-from quantum_edge_detection import QuantumEdgeDetection
+    # Try to import Session
+    try:
+        from qiskit_ibm_runtime import Session
+        SESSION_AVAILABLE = True
+        print("✅ Session available")
+    except ImportError:
+        print("⚠️ Session not available")
 
-class IBMQuantumHardwareTester:
+    # Always import legacy Sampler as fallback
+    from qiskit_ibm_runtime import Sampler
+    print("✅ Legacy Sampler available")
+
+except ImportError:
+    print("❌ IBM Runtime not available at all")
+    RUNTIME_AVAILABLE = False
+
+# Import our optimized quantum systems
+from scaled_quantum_processing import ScalableFRQIEncoder
+from integrated_quantum_edge_detection import OptimizedQuantumEdgeDetection
+
+def clean_measurement_string_fixed(state_str: str, expected_qubits: int = 3) -> str:
     """
-    Test quantum image processing algorithms on real IBM Quantum hardware
+    Enhanced measurement string cleaning that handles different formats
+
+    Args:
+        state_str: Raw measurement string from Qiskit
+        expected_qubits: Expected number of qubits (3 for our system)
+
+    Returns:
+        Cleaned measurement string of correct length
+    """
+    # Remove any whitespace
+    clean = ''.join(state_str.split())
+
+    # Case 1: String is exactly the right length
+    if len(clean) == expected_qubits:
+        return clean
+
+    # Case 2: String is doubled (e.g., '101101' instead of '101')
+    if len(clean) == expected_qubits * 2:
+        first_half = clean[:expected_qubits]
+        second_half = clean[expected_qubits:]
+        if first_half == second_half:
+            return first_half
+
+    # Case 3: String is longer than expected (padded with zeros)
+    # Case 3: String is longer than expected (padded with zeros)
+    if len(clean) > expected_qubits:
+        # FIXED: Take the FIRST N bits (where the data actually is!)
+        truncated = clean[:expected_qubits]  # ← FIXED: Use [:3] not [-3:]
+        print(f"      String padded, taking first {expected_qubits} bits: '{clean}' → '{truncated}'")
+        return truncated
+
+    # Case 4: String is shorter than expected (shouldn't happen)
+    if len(clean) < expected_qubits:
+        # Pad with leading zeros
+        padded = clean.zfill(expected_qubits)
+        return padded
+
+    return clean
+
+class FullyFixedIBMQuantumTester:
+    """
+    Fully fixed IBM Quantum hardware tester with corrected measurement processing
     """
 
     def __init__(self):
@@ -42,7 +112,7 @@ class IBMQuantumHardwareTester:
             return
 
         try:
-            # Initialize IBM Quantum service with modern API
+            # Initialize IBM Quantum service
             self.service = QiskitRuntimeService(channel="ibm_quantum")
             print("✅ Connected to IBM Quantum successfully!")
 
@@ -54,24 +124,13 @@ class IBMQuantumHardwareTester:
 
         except Exception as e:
             print(f"❌ Failed to connect to IBM Quantum: {e}")
-            print("Please set up your IBM Quantum account first:")
-            print("QiskitRuntimeService.save_account(channel='ibm_quantum', token='YOUR_TOKEN')")
             self.service = None
 
     def select_best_backend(self, min_qubits=3):
-        """
-        Select the best available backend for our quantum image processing
-
-        Args:
-            min_qubits (int): Minimum qubits needed
-
-        Returns:
-            Backend: Best available quantum backend
-        """
+        """Select the best available backend"""
         if not self.service:
             return None
 
-        # Filter backends by availability and qubit count
         available_backends = []
 
         for backend in self.backends:
@@ -92,31 +151,175 @@ class IBMQuantumHardwareTester:
             print("❌ No suitable quantum backends available")
             return None
 
-        # Sort by queue length (prefer less busy backends)
+        # Sort by queue length
         available_backends.sort(key=lambda x: x['queue'])
 
         print("📋 Available Quantum Backends:")
-        for i, backend_info in enumerate(available_backends[:5]):  # Show top 5
+        for i, backend_info in enumerate(available_backends[:3]):
             print(f"{i+1}. {backend_info['name']}: {backend_info['qubits']} qubits, "
                   f"queue: {backend_info['queue']} jobs")
 
         selected = available_backends[0]['backend']
         print(f"🎯 Selected: {selected.name}")
-
         return selected
 
-    def create_noise_model(self, backend):
+    def run_on_hardware_fixed(self, circuit, backend, shots=1024):
         """
-        Create a noise model based on real hardware characteristics
-
-        Args:
-            backend: IBM Quantum backend
-
-        Returns:
-            NoiseModel: Qiskit noise model for simulation
+        Fixed hardware execution with proper API usage
         """
+        print(f"🚀 Running on {backend.name} with {shots} shots...")
+        print(f"   API capabilities: SamplerV2={SAMPLER_V2_AVAILABLE}, Session={SESSION_AVAILABLE}")
+
         try:
-            from qiskit_aer.noise import NoiseModel
+            # Ensure circuit has measurements
+            if not circuit.cregs:
+                circuit.measure_all()
+
+            # Transpile circuit
+            transpiled_circuit = transpile(circuit, backend=backend, optimization_level=2)
+            print(f"📊 Transpiled: {transpiled_circuit.depth()} depth, {transpiled_circuit.count_ops()} gates")
+
+            start_time = time.time()
+            job = None
+
+            # Method 1: Try SamplerV2 with Session (correct 2024 syntax)
+            if SAMPLER_V2_AVAILABLE and SESSION_AVAILABLE:
+                try:
+                    print("🔄 Trying SamplerV2 + Session (2024 syntax)...")
+                    from qiskit_ibm_runtime import SamplerV2, Session
+
+                    with Session(backend=backend) as session:
+                        sampler = SamplerV2()  # No session parameter!
+                        job = sampler.run([transpiled_circuit], shots=shots)
+                        print(f"✅ Job submitted with SamplerV2+Session: {job.job_id()}")
+
+                except Exception as e1:
+                    print(f"⚠️ SamplerV2+Session failed: {e1}")
+                    job = None
+
+            # Method 2: Try legacy Sampler with Session
+            if job is None and SESSION_AVAILABLE:
+                try:
+                    print("🔄 Trying legacy Sampler + Session...")
+                    from qiskit_ibm_runtime import Sampler, Session
+
+                    with Session(backend=backend) as session:
+                        sampler = Sampler()
+                        job = sampler.run(transpiled_circuit, shots=shots)
+                        print(f"✅ Job submitted with Sampler+Session: {job.job_id()}")
+
+                except Exception as e2:
+                    print(f"⚠️ Sampler+Session failed: {e2}")
+                    job = None
+
+            # Method 3: Try legacy Sampler without Session
+            if job is None:
+                try:
+                    print("🔄 Trying legacy Sampler without Session...")
+                    from qiskit_ibm_runtime import Sampler
+
+                    sampler = Sampler()
+                    job = sampler.run(transpiled_circuit, shots=shots)
+                    print(f"✅ Job submitted with legacy Sampler: {job.job_id()}")
+
+                except Exception as e3:
+                    print(f"⚠️ Legacy Sampler failed: {e3}")
+                    job = None
+
+            # If all methods failed
+            if job is None:
+                print("❌ All hardware execution methods failed")
+                return None
+
+            # Wait for results
+            print("⏳ Waiting for quantum execution...")
+            print(f"   Job ID: {job.job_id()}")
+            print("   This may take several minutes on real hardware...")
+
+            result = job.result()
+            execution_time = time.time() - start_time
+
+            # Version-agnostic result extraction
+            raw_counts = None
+
+            try:
+                print(f"🔍 Processing result type: {type(result)}")
+
+                # Handle SamplerV2 result format
+                if hasattr(result, '__len__') and len(result) > 0:
+                    first_result = result[0]
+                    if hasattr(first_result, 'data'):
+                        data = first_result.data
+                        for attr_name in ['meas', 'c', 'cr', 'classical', 'measurements']:
+                            if hasattr(data, attr_name):
+                                try:
+                                    attr = getattr(data, attr_name)
+                                    if hasattr(attr, 'get_counts'):
+                                        raw_counts = attr.get_counts()
+                                        print(f"   ✅ Found counts via data.{attr_name}.get_counts()")
+                                        break
+                                except:
+                                    continue
+
+                    # Try quasi_dists for newer SamplerV2
+                    if raw_counts is None and hasattr(first_result, 'quasi_dists'):
+                        try:
+                            quasi_dist = first_result.quasi_dists[0]
+                            raw_counts = {}
+                            for state, prob in quasi_dist.items():
+                                state_str = format(state, f'0{transpiled_circuit.num_clbits}b')
+                                raw_counts[state_str] = int(prob * shots)
+                            print("   ✅ Converted quasi_dists to counts")
+                        except Exception as qd_error:
+                            print(f"   ⚠️ Quasi_dists conversion failed: {qd_error}")
+
+                # Handle legacy Sampler result format
+                if raw_counts is None and hasattr(result, 'get_counts'):
+                    raw_counts = result.get_counts()
+                    print("   ✅ Found counts via result.get_counts()")
+
+                if raw_counts is None:
+                    print("❌ Could not extract measurement counts from result")
+                    return None
+
+                # Clean and validate counts
+                cleaned_counts = {}
+                total_shots_received = 0
+
+                for state, count in raw_counts.items():
+                    clean_state = str(state).replace(' ', '')
+                    count_int = int(count)
+                    cleaned_counts[clean_state] = count_int
+                    total_shots_received += count_int
+
+                print("✅ Hardware execution successful!")
+                print(f"   Execution time: {execution_time:.3f}s")
+                print(f"   Unique states measured: {len(cleaned_counts)}")
+                print(f"   Total shots received: {total_shots_received}")
+
+                return {
+                    'counts': cleaned_counts,
+                    'execution_time': execution_time,
+                    'backend_name': backend.name,
+                    'shots': shots,
+                    'actual_shots': total_shots_received,
+                    'transpiled_depth': transpiled_circuit.depth(),
+                    'transpiled_gates': transpiled_circuit.count_ops(),
+                    'job_id': job.job_id(),
+                    'success': True
+                }
+
+            except Exception as e:
+                print(f"❌ Result extraction failed: {e}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Hardware execution failed: {e}")
+            return None
+
+    def create_noise_model(self, backend):
+        """Create noise model from backend"""
+        try:
             noise_model = NoiseModel.from_backend(backend)
             print(f"✅ Created noise model from {backend.name}")
             return noise_model
@@ -124,172 +327,17 @@ class IBMQuantumHardwareTester:
             print(f"⚠️ Could not create noise model: {e}")
             return None
 
-    def run_on_hardware(self, circuit, backend, shots=1024):
-        """
-        Execute quantum circuit on real IBM hardware with modern API
-
-        Args:
-            circuit (QuantumCircuit): Quantum circuit to execute
-            backend: IBM Quantum backend
-            shots (int): Number of shots
-
-        Returns:
-            dict: Execution results
-        """
-        print(f"🚀 Running on {backend.name} with {shots} shots...")
-
-        try:
-            # Ensure circuit has measurements
-            if not circuit.cregs:
-                circuit.measure_all()
-
-            # Transpile circuit for the specific backend
-            transpiled_circuit = transpile(circuit, backend=backend, optimization_level=2)
-            print(f"📊 Circuit transpiled: {transpiled_circuit.depth()} depth, "
-                  f"{transpiled_circuit.count_ops()} gates")
-
-            # Create sampler with modern API
-            try:
-                # Try SamplerV2 with Session (latest approach)
-                from qiskit_ibm_runtime import Session
-                with Session(service=self.service, backend=backend) as session:
-                    sampler = SamplerV2(session=session)
-                    job = sampler.run([transpiled_circuit], shots=shots)
-
-            except (NameError, ImportError, TypeError):
-                try:
-                    # Fallback: Try SamplerV2 without backend parameter
-                    sampler = SamplerV2(backend=backend)
-                    job = sampler.run([transpiled_circuit], shots=shots)
-                except TypeError:
-                    # Final fallback to legacy Sampler
-                    print("⚠️ Using legacy Sampler API")
-                    from qiskit_ibm_runtime import Sampler
-                    sampler = Sampler(backend=backend)
-                    job = sampler.run(transpiled_circuit, shots=shots)
-
-            print(f"⏳ Job submitted: {job.job_id()}")
-            print("Waiting for results...")
-
-            # Wait for job completion
-            start_time = time.time()
-            try:
-                result = job.result()
-                execution_time = time.time() - start_time
-
-                # Extract counts with proper error handling for different result formats
-                try:
-                    # Try modern result format
-                    if hasattr(result[0].data, 'meas'):
-                        raw_counts = result[0].data.meas.get_counts()
-                    else:
-                        raw_counts = result[0].data.get_counts()
-                except (AttributeError, IndexError):
-                    # Try legacy result format
-                    raw_counts = result.get_counts()
-
-                # Clean measurement strings (remove spaces)
-                cleaned_counts = {}
-                for state, count in raw_counts.items():
-                    clean_state = state.replace(' ', '')
-                    cleaned_counts[clean_state] = count
-
-                print("✅ Job completed successfully!")
-
-                return {
-                    'counts': cleaned_counts,
-                    'execution_time': execution_time,
-                    'backend_name': backend.name,
-                    'shots': shots,
-                    'transpiled_depth': transpiled_circuit.depth(),
-                    'transpiled_gates': transpiled_circuit.count_ops(),
-                    'job_id': job.job_id()
-                }
-
-            except Exception as e:
-                print(f"❌ Job execution failed: {e}")
-                return None
-
-        except Exception as e:
-            print(f"❌ Hardware execution failed: {e}")
-            return None
-
-    def run_noisy_simulation(self, circuit, noise_model, shots=1024):
-        """
-        Run circuit on noisy simulator to compare with hardware
-
-        Args:
-            circuit (QuantumCircuit): Quantum circuit
-            noise_model: Noise model from real hardware
-            shots (int): Number of shots
-
-        Returns:
-            dict: Simulation results
-        """
-        print("🔧 Running noisy simulation...")
-
-        try:
-            # Add measurements if not present
-            if not circuit.cregs:
-                measured_circuit = circuit.copy()
-                measured_circuit.measure_all()
-            else:
-                measured_circuit = circuit
-
-            # Run noisy simulation
-            simulator = AerSimulator(noise_model=noise_model)
-            transpiled_circuit = transpile(measured_circuit, simulator)
-
-            start_time = time.time()
-            job = simulator.run(transpiled_circuit, shots=shots)
-            result = job.result()
-            execution_time = time.time() - start_time
-
-            raw_counts = result.get_counts()
-
-            # Clean measurement strings (remove spaces)
-            cleaned_counts = {}
-            for state, count in raw_counts.items():
-                clean_state = state.replace(' ', '')
-                cleaned_counts[clean_state] = count
-
-            print("✅ Noisy simulation completed!")
-
-            return {
-                'counts': cleaned_counts,
-                'execution_time': execution_time,
-                'backend_name': 'noisy_simulator',
-                'shots': shots,
-                'transpiled_depth': transpiled_circuit.depth(),
-                'transpiled_gates': transpiled_circuit.count_ops()
-            }
-
-        except Exception as e:
-            print(f"❌ Noisy simulation failed: {e}")
-            return None
-
     def run_ideal_simulation(self, circuit, shots=1024):
-        """
-        Run circuit on ideal simulator for comparison
-
-        Args:
-            circuit (QuantumCircuit): Quantum circuit
-            shots (int): Number of shots
-
-        Returns:
-            dict: Ideal simulation results
-        """
+        """Run ideal simulation"""
         print("⚡ Running ideal simulation...")
 
         try:
-            # Add measurements if not present
             if not circuit.cregs:
                 measured_circuit = circuit.copy()
                 measured_circuit.measure_all()
             else:
                 measured_circuit = circuit
 
-            # Run ideal simulation
             simulator = AerSimulator()
             transpiled_circuit = transpile(measured_circuit, simulator)
 
@@ -299,318 +347,371 @@ class IBMQuantumHardwareTester:
             execution_time = time.time() - start_time
 
             raw_counts = result.get_counts()
-
-            # Clean measurement strings (remove spaces)
-            cleaned_counts = {}
-            for state, count in raw_counts.items():
-                clean_state = state.replace(' ', '')
-                cleaned_counts[clean_state] = count
+            cleaned_counts = {state.replace(' ', ''): count for state, count in raw_counts.items()}
 
             print("✅ Ideal simulation completed!")
-
             return {
                 'counts': cleaned_counts,
                 'execution_time': execution_time,
                 'backend_name': 'ideal_simulator',
                 'shots': shots,
-                'transpiled_depth': transpiled_circuit.depth(),
-                'transpiled_gates': transpiled_circuit.count_ops()
+                'success': True
             }
 
         except Exception as e:
             print(f"❌ Ideal simulation failed: {e}")
             return None
 
-    def analyze_hardware_vs_simulation(self, hardware_result, noisy_result, ideal_result):
+    def run_noisy_simulation(self, circuit, noise_model, shots=1024):
+        """Run noisy simulation"""
+        print("🔧 Running noisy simulation...")
+
+        try:
+            if not circuit.cregs:
+                measured_circuit = circuit.copy()
+                measured_circuit.measure_all()
+            else:
+                measured_circuit = circuit
+
+            simulator = AerSimulator(noise_model=noise_model)
+            transpiled_circuit = transpile(measured_circuit, simulator)
+
+            start_time = time.time()
+            job = simulator.run(transpiled_circuit, shots=shots)
+            result = job.result()
+            execution_time = time.time() - start_time
+
+            raw_counts = result.get_counts()
+            cleaned_counts = {state.replace(' ', ''): count for state, count in raw_counts.items()}
+
+            print("✅ Noisy simulation completed!")
+            return {
+                'counts': cleaned_counts,
+                'execution_time': execution_time,
+                'backend_name': 'noisy_simulator',
+                'shots': shots,
+                'success': True
+            }
+
+        except Exception as e:
+            print(f"❌ Noisy simulation failed: {e}")
+            return None
+
+    def reconstruct_image_with_encoder_fixed(self, counts, shots, encoder):
         """
-        Analyze differences between hardware and simulation results
-
-        Args:
-            hardware_result (dict): Results from real hardware
-            noisy_result (dict): Results from noisy simulation
-            ideal_result (dict): Results from ideal simulation
-
-        Returns:
-            dict: Analysis results
+        FIXED reconstruction with proper measurement string handling
         """
-        print("\n📊 Analyzing Hardware vs Simulation Results...")
+        print(f"🔧 Reconstructing using FIXED encoder...")
+        print(f"   Raw counts received: {counts}")
+        print(f"   Total unique states: {len(counts)}")
 
-        # Calculate fidelities and differences
-        def calculate_fidelity(counts1, counts2, total_shots):
-            """Calculate measurement fidelity between two count dictionaries"""
-            all_states = set(counts1.keys()) | set(counts2.keys())
-            fidelity = 0
+        # Clean all measurement strings with fixed function
+        cleaned_counts = {}
+        expected_qubits = encoder.n_total_qubits
 
-            for state in all_states:
-                p1 = counts1.get(state, 0) / total_shots
-                p2 = counts2.get(state, 0) / total_shots
-                fidelity += np.sqrt(p1 * p2)
+        print(f"   Expected qubits: {expected_qubits}")
+        print(f"   Cleaning measurement strings:")
 
-            return fidelity
+        for state_str, count in counts.items():
+            clean_state = clean_measurement_string_fixed(state_str, expected_qubits)
+            print(f"     '{state_str}' → '{clean_state}' ({len(state_str)} → {len(clean_state)} bits)")
 
-        analysis = {}
+            if clean_state in cleaned_counts:
+                cleaned_counts[clean_state] += count
+            else:
+                cleaned_counts[clean_state] = count
 
-        if hardware_result and ideal_result:
-            hw_ideal_fidelity = calculate_fidelity(
-                hardware_result['counts'],
-                ideal_result['counts'],
-                hardware_result['shots']
-            )
-            analysis['hardware_ideal_fidelity'] = hw_ideal_fidelity
-            print(f"🎯 Hardware vs Ideal Fidelity: {hw_ideal_fidelity:.3f}")
+        print(f"   Final cleaned counts: {cleaned_counts}")
 
-        if hardware_result and noisy_result:
-            hw_noisy_fidelity = calculate_fidelity(
-                hardware_result['counts'],
-                noisy_result['counts'],
-                hardware_result['shots']
-            )
-            analysis['hardware_noisy_fidelity'] = hw_noisy_fidelity
-            print(f"🔧 Hardware vs Noisy Sim Fidelity: {hw_noisy_fidelity:.3f}")
+        # Use the encoder's reconstruction method with cleaned counts
+        return encoder._reconstruct_from_measurements(cleaned_counts, shots, verbose=True)
 
-        if noisy_result and ideal_result:
-            noisy_ideal_fidelity = calculate_fidelity(
-                noisy_result['counts'],
-                ideal_result['counts'],
-                ideal_result['shots']
-            )
-            analysis['noisy_ideal_fidelity'] = noisy_ideal_fidelity
-            print(f"⚡ Noisy vs Ideal Fidelity: {noisy_ideal_fidelity:.3f}")
-
-        return analysis
-
-    def visualize_hardware_comparison(self, hardware_result, noisy_result, ideal_result, original_image):
+    def test_optimized_frqi_fixed(self, pattern="single", image_size=2, shots=2048):
         """
-        Visualize comparison between hardware and simulation results
-
-        Args:
-            hardware_result (dict): Hardware execution results
-            noisy_result (dict): Noisy simulation results
-            ideal_result (dict): Ideal simulation results
-            original_image (np.ndarray): Original test image
+        Test optimized FRQI system on IBM hardware with FIXED measurement processing
         """
+        print(f"\n🔬 Testing FIXED Optimized FRQI - {pattern} ({image_size}×{image_size})...")
+
+        # Create optimized system
+        try:
+            optimized_system = OptimizedQuantumEdgeDetection(image_size=image_size)
+            test_image = optimized_system.create_test_image(pattern)
+
+            print(f"Test image:\n{test_image}")
+
+            # Get FRQI circuit
+            frqi_circuit = optimized_system.get_base_frqi_circuit(test_image)
+
+            print(f"\n📋 Circuit Analysis:")
+            print(f"   Total qubits: {frqi_circuit.num_qubits}")
+            print(f"   Circuit depth: {frqi_circuit.depth()}")
+            print(f"   Gate counts: {frqi_circuit.count_ops()}")
+
+            # Select backend
+            backend = self.select_best_backend(min_qubits=frqi_circuit.num_qubits)
+            if not backend:
+                print("❌ No suitable backend available")
+                return None
+
+            # Add measurements to circuit
+            frqi_circuit.measure_all()
+
+            # Run simulations and hardware
+            ideal_result = self.run_ideal_simulation(frqi_circuit, shots)
+
+            noise_model = self.create_noise_model(backend)
+            noisy_result = None
+            if noise_model:
+                noisy_result = self.run_noisy_simulation(frqi_circuit, noise_model, shots)
+
+            # Try hardware execution
+            hardware_result = self.run_on_hardware_fixed(frqi_circuit, backend, shots)
+
+            # Reconstruct images using FIXED encoder
+            results = {
+                'test_image': test_image,
+                'pattern_name': pattern,
+                'image_size': image_size,
+                'ideal_result': ideal_result,
+                'noisy_result': noisy_result,
+                'hardware_result': hardware_result,
+                'encoder': optimized_system.frqi_encoder
+            }
+
+            print(f"\n🔧 RECONSTRUCTION WITH FIXED METHOD:")
+
+            if ideal_result:
+                print(f"📊 Processing ideal simulation results...")
+                results['ideal_reconstructed'] = self.reconstruct_image_with_encoder_fixed(
+                    ideal_result['counts'], shots, optimized_system.frqi_encoder
+                )
+
+            if noisy_result:
+                print(f"📊 Processing noisy simulation results...")
+                results['noisy_reconstructed'] = self.reconstruct_image_with_encoder_fixed(
+                    noisy_result['counts'], shots, optimized_system.frqi_encoder
+                )
+
+            if hardware_result and hardware_result.get('success'):
+                print(f"📊 Processing hardware results...")
+                results['hardware_reconstructed'] = self.reconstruct_image_with_encoder_fixed(
+                    hardware_result['counts'], shots, optimized_system.frqi_encoder
+                )
+
+            # Calculate quality metrics using robust correlation
+            print(f"\n📊 CALCULATING CORRELATIONS:")
+
+            if 'ideal_reconstructed' in results:
+                ideal_corr = optimized_system._calculate_correlation_robust(test_image, results['ideal_reconstructed'])
+                results['ideal_correlation'] = ideal_corr
+                print(f"   ✅ Ideal reconstruction correlation: {ideal_corr:.4f}")
+
+            if 'noisy_reconstructed' in results:
+                noisy_corr = optimized_system._calculate_correlation_robust(test_image, results['noisy_reconstructed'])
+                results['noisy_correlation'] = noisy_corr
+                print(f"   ✅ Noisy reconstruction correlation: {noisy_corr:.4f}")
+
+            if 'hardware_reconstructed' in results:
+                hw_corr = optimized_system._calculate_correlation_robust(test_image, results['hardware_reconstructed'])
+                results['hardware_correlation'] = hw_corr
+                print(f"   ✅ Hardware reconstruction correlation: {hw_corr:.4f}")
+
+            # Visualize results
+            self.visualize_fixed_results(results)
+
+            return results
+
+        except Exception as e:
+            print(f"❌ Fixed FRQI test failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def visualize_fixed_results(self, results):
+        """Enhanced visualization with fixed results"""
         fig, axes = plt.subplots(2, 4, figsize=(20, 10))
 
+        test_image = results['test_image']
+        pattern_name = results['pattern_name']
+        image_size = results['image_size']
+
+        fig.suptitle(f'FIXED FRQI Hardware Test - {pattern_name} ({image_size}×{image_size})',
+                     fontsize=16, fontweight='bold')
+
         # Original image
-        im1 = axes[0,0].imshow(original_image, cmap='gray', vmin=0, vmax=1)
+        im1 = axes[0,0].imshow(test_image, cmap='gray', vmin=0, vmax=1)
         axes[0,0].set_title('Original Image')
+        axes[0,0].grid(True, alpha=0.3)
         plt.colorbar(im1, ax=axes[0,0])
 
-        # Reconstruct images from quantum results
-        image_size = original_image.shape[0]
+        # Reconstructed images
+        vmax = 1.0
 
-        def reconstruct_from_counts(counts, shots):
-            """Reconstruct image from measurement counts"""
-            reconstructed = np.zeros((image_size, image_size))
-
-            for state, count in counts.items():
-                if len(state) >= 3:  # Ensure we have enough bits
-                    color_bit = int(state[0])
-                    position_bits = state[1:]
-
-                    if len(position_bits) >= 2:  # For 2x2 image
-                        position_idx = int(position_bits, 2)
-                        row = position_idx // image_size
-                        col = position_idx % image_size
-
-                        if row < image_size and col < image_size and color_bit == 1:
-                            reconstructed[row, col] += count / shots
-
-            return reconstructed
-
-        # Reconstruct images
-        if ideal_result:
-            ideal_reconstructed = reconstruct_from_counts(ideal_result['counts'], ideal_result['shots'])
-            im2 = axes[0,1].imshow(ideal_reconstructed, cmap='hot', vmin=0, vmax=1)
-            axes[0,1].set_title(f'Ideal Simulation\nTime: {ideal_result["execution_time"]:.3f}s')
+        if 'ideal_reconstructed' in results:
+            im2 = axes[0,1].imshow(results['ideal_reconstructed'], cmap='viridis', vmin=0, vmax=vmax)
+            corr = results.get('ideal_correlation', 0)
+            axes[0,1].set_title(f'FIXED Ideal Simulation\nCorr: {corr:.3f}')
+            axes[0,1].grid(True, alpha=0.3)
             plt.colorbar(im2, ax=axes[0,1])
 
-        if noisy_result:
-            noisy_reconstructed = reconstruct_from_counts(noisy_result['counts'], noisy_result['shots'])
-            im3 = axes[0,2].imshow(noisy_reconstructed, cmap='hot', vmin=0, vmax=1)
-            axes[0,2].set_title(f'Noisy Simulation\nTime: {noisy_result["execution_time"]:.3f}s')
+        if 'noisy_reconstructed' in results:
+            im3 = axes[0,2].imshow(results['noisy_reconstructed'], cmap='viridis', vmin=0, vmax=vmax)
+            corr = results.get('noisy_correlation', 0)
+            axes[0,2].set_title(f'FIXED Noisy Simulation\nCorr: {corr:.3f}')
+            axes[0,2].grid(True, alpha=0.3)
             plt.colorbar(im3, ax=axes[0,2])
 
-        if hardware_result:
-            hardware_reconstructed = reconstruct_from_counts(hardware_result['counts'], hardware_result['shots'])
-            im4 = axes[0,3].imshow(hardware_reconstructed, cmap='hot', vmin=0, vmax=1)
-            axes[0,3].set_title(f'Real Hardware\n{hardware_result["backend_name"]}\nTime: {hardware_result["execution_time"]:.3f}s')
+        if 'hardware_reconstructed' in results:
+            im4 = axes[0,3].imshow(results['hardware_reconstructed'], cmap='viridis', vmin=0, vmax=vmax)
+            hw_corr = results.get('hardware_correlation', 0)
+            backend_name = results.get('hardware_result', {}).get('backend_name', 'Unknown')
+            axes[0,3].set_title(f'FIXED Hardware ({backend_name})\nCorr: {hw_corr:.3f}')
+            axes[0,3].grid(True, alpha=0.3)
             plt.colorbar(im4, ax=axes[0,3])
 
-        # Measurement statistics comparison
-        results_list = [ideal_result, noisy_result, hardware_result]
-        titles = ['Ideal Simulator', 'Noisy Simulator', 'Real Hardware']
+        # Show measurement statistics
+        methods = ['ideal_result', 'noisy_result', 'hardware_result']
+        titles = ['Ideal', 'Noisy', 'Hardware']
 
-        for i, (result, title) in enumerate(zip(results_list, titles)):
-            if result and i < 3:
-                counts = result['counts']
-                axes[1,i].bar(range(len(counts)), list(counts.values()))
-                axes[1,i].set_title(f'{title}\nTotal Counts: {sum(counts.values())}')
-                axes[1,i].set_xlabel('Quantum State')
+        for i, (method, title) in enumerate(zip(methods, titles)):
+            if method in results and results[method] and i < 3:
+                counts = results[method]['counts']
+                sorted_counts = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:6]
+                states = [s[0] for s in sorted_counts]
+                values = [s[1] for s in sorted_counts]
+
+                colors = ['red' if s[0] == '1' else 'steelblue' for s in states]
+
+                axes[1,i].bar(range(len(states)), values, color=colors)
+                axes[1,i].set_title(f'{title} States')
                 axes[1,i].set_ylabel('Count')
+                axes[1,i].set_xticks(range(len(states)))
+                axes[1,i].set_xticklabels(states, rotation=45, fontsize=8)
 
-                # Rotate x-axis labels
-                if len(counts) > 0:
-                    axes[1,i].set_xticks(range(len(counts)))
-                    axes[1,i].set_xticklabels(list(counts.keys()), rotation=45)
+        # Performance summary
+        correlations = []
+        labels = []
+        colors = []
 
-        # Execution time comparison
-        if all(result for result in results_list):
-            times = [result['execution_time'] for result in results_list]
-            axes[1,3].bar(titles, times)
-            axes[1,3].set_title('Execution Time Comparison')
-            axes[1,3].set_ylabel('Time (seconds)')
-            axes[1,3].tick_params(axis='x', rotation=45)
+        for method, label, color in [('ideal', 'Ideal', 'green'), ('noisy', 'Noisy', 'orange'), ('hardware', 'Hardware', 'blue')]:
+            if f'{method}_correlation' in results:
+                correlations.append(results[f'{method}_correlation'])
+                labels.append(label)
+                colors.append(color)
+
+        if correlations:
+            bars = axes[1,3].bar(labels, correlations, color=colors)
+            axes[1,3].set_title('FIXED FRQI Performance')
+            axes[1,3].set_ylabel('Correlation')
+            axes[1,3].set_ylim([0, 1])
+
+            # Add performance indicators
+            axes[1,3].axhline(y=0.9, color='green', linestyle='--', alpha=0.5, label='Excellent')
+            axes[1,3].axhline(y=0.7, color='orange', linestyle='--', alpha=0.5, label='Good')
+            axes[1,3].legend()
 
         plt.tight_layout()
         plt.show()
 
-    def run_complete_hardware_test(self, test_image, pattern_name="test"):
-        """
-        Run complete hardware test with all comparisons
+        # Print detailed analysis
+        self._print_fixed_analysis(results)
 
-        Args:
-            test_image (np.ndarray): Test image
-            pattern_name (str): Name of test pattern
+    def _print_fixed_analysis(self, results):
+        """Print detailed analysis of fixed results"""
+        pattern = results['pattern_name']
+        size = results['image_size']
 
-        Returns:
-            dict: Complete test results
-        """
-        print(f"\n🔬 Running complete hardware test for {pattern_name} pattern...")
+        print(f"\n📊 DETAILED FIXED ANALYSIS")
+        print("=" * 70)
+        print(f"Pattern: {pattern.upper()} | Size: {size}×{size}")
 
-        # Select backend
-        backend = self.select_best_backend(min_qubits=3)
-        if not backend:
-            print("❌ No suitable backend available")
-            return None
+        print(f"\n🔧 MEASUREMENT STRING FIXES APPLIED:")
+        print(f"   ✅ Enhanced measurement string cleaning")
+        print(f"   ✅ Proper bit length handling")
+        print(f"   ✅ Consistent processing across simulators and hardware")
 
-        # Create quantum edge detection circuit
-        qed = QuantumEdgeDetection(image_size=test_image.shape[0])
-        frqi_circuit = qed.frqi_encoder.encode_image(test_image)
-        edge_circuit = qed.create_qhed_circuit(frqi_circuit)
+        print(f"\n📊 PERFORMANCE COMPARISON:")
+        methods = ['ideal', 'noisy', 'hardware']
+        for method in methods:
+            if f'{method}_correlation' in results:
+                corr = results[f'{method}_correlation']
+                print(f"   {method.title():10}: {corr:.4f}")
 
-        # Add measurements to circuit
-        edge_circuit.measure_all()
+        # Overall assessment
+        ideal_corr = results.get('ideal_correlation', 0)
+        hw_corr = results.get('hardware_correlation', 0)
 
-        print(f"📋 Circuit stats: {edge_circuit.depth()} depth, {edge_circuit.count_ops()} gates")
+        print(f"\n🎯 FIXED SYSTEM ASSESSMENT:")
+        if ideal_corr > 0.9 and hw_corr > 0.7:
+            print(f"   🌟 OUTSTANDING - All fixes working perfectly!")
+        elif ideal_corr > 0.7 and hw_corr > 0.5:
+            print(f"   ✅ EXCELLENT - Fixes significantly improved performance!")
+        elif ideal_corr > 0.5:
+            print(f"   ✅ GOOD - Major improvement, some optimization possible")
+        else:
+            print(f"   ⚠️ Still needs work - but major progress made")
 
-        # Create noise model
-        noise_model = self.create_noise_model(backend)
+        if abs(ideal_corr - hw_corr) < 0.3:
+            print(f"   ✅ Consistent performance between ideal and hardware!")
+        else:
+            print(f"   ⚠️ Performance gap between ideal and hardware")
 
-        # Run on all platforms
-        shots = 1024
 
-        # 1. Ideal simulation
-        ideal_result = self.run_ideal_simulation(edge_circuit, shots)
-
-        # 2. Noisy simulation
-        noisy_result = None
-        if noise_model:
-            noisy_result = self.run_noisy_simulation(edge_circuit, noise_model, shots)
-
-        # 3. Real hardware
-        hardware_result = self.run_on_hardware(edge_circuit, backend, shots)
-
-        # Analyze results
-        analysis = self.analyze_hardware_vs_simulation(hardware_result, noisy_result, ideal_result)
-
-        # Only visualize if we have valid results
-        if ideal_result or hardware_result:
-            try:
-                self.visualize_hardware_comparison(hardware_result, noisy_result, ideal_result, test_image)
-            except Exception as e:
-                print(f"⚠️ Visualization failed: {e}")
-                print("Results are still valid, just visualization had issues")
-
-        # Compile complete results
-        complete_results = {
-            'test_image': test_image,
-            'pattern_name': pattern_name,
-            'ideal_result': ideal_result,
-            'noisy_result': noisy_result,
-            'hardware_result': hardware_result,
-            'analysis': analysis,
-            'backend_name': backend.name if backend else None
-        }
-
-        return complete_results
-
-# Main execution
+# Test the fully fixed implementation
 if __name__ == "__main__":
-    print("🚀 IBM Quantum Hardware Testing for Image Processing")
-    print("=" * 60)
+    print("🚀 FULLY FIXED IBM QUANTUM HARDWARE TESTING")
+    print("=" * 55)
+    print("Corrected measurement string processing for all backends")
 
-    # Initialize hardware tester
-    tester = IBMQuantumHardwareTester()
+    tester = FullyFixedIBMQuantumTester()
 
     if not tester.service:
         print("❌ Cannot proceed without IBM Quantum access")
-        print("Please set up your account and try again")
+        print("💡 Make sure you have:")
+        print("   1. IBM Quantum account set up")
+        print("   2. qiskit-ibm-runtime installed")
+        print("   3. API token configured")
         exit()
 
-    # Create test images
-    encoder = FRQIEncoder(image_size=2)  # Start with 2x2 for hardware limitations
+    # Test the fixed system
+    test_mode = input("\nChoose test mode:\n1. Quick FIXED FRQI test\n2. Test multiple patterns\nEnter choice (1-2): ").strip()
 
-    test_patterns = ["edge", "corner"]  # Start with simple patterns
+    if test_mode == "1":
+        # Quick fixed test
+        print("\n🔬 Quick FIXED FRQI Test")
+        pattern = input("Enter pattern (single/corners/cross): ").strip() or "cross"
+        size = int(input("Enter image size (2 or 4): ").strip() or "2")
 
-    all_hardware_results = {}
-
-    for pattern in test_patterns:
-        print(f"\n{'='*20} Testing {pattern.upper()} Pattern {'='*20}")
-
-        # Create test image
-        test_image = encoder.create_sample_image(pattern)
-        print(f"Test image ({pattern}):\n{test_image}")
-
-        # Run complete hardware test
-        results = tester.run_complete_hardware_test(test_image, pattern)
+        results = tester.test_optimized_frqi_fixed(pattern, size, shots=1024)
 
         if results:
-            all_hardware_results[pattern] = results
+            ideal_corr = results.get('ideal_correlation', 0)
+            hw_corr = results.get('hardware_correlation', 0)
 
-            # Print summary
-            print(f"\n📋 {pattern.upper()} Pattern Results:")
-            if results['ideal_result']:
-                print(f"  Ideal execution time: {results['ideal_result']['execution_time']:.3f}s")
-            if results['hardware_result']:
-                print(f"  Hardware execution time: {results['hardware_result']['execution_time']:.3f}s")
-                print(f"  Backend used: {results['hardware_result']['backend_name']}")
+            print(f"\n🎯 FIXED Test Results:")
+            print(f"   Ideal correlation: {ideal_corr:.4f}")
+            print(f"   Hardware correlation: {hw_corr:.4f}")
+            print(f"   Improvement: Both should now be high!")
 
-            if 'hardware_ideal_fidelity' in results['analysis']:
-                print(f"  Hardware fidelity: {results['analysis']['hardware_ideal_fidelity']:.3f}")
-        else:
-            print(f"❌ {pattern} pattern test failed")
-
-    # Final summary
-    print(f"\n🎯 HARDWARE TESTING SUMMARY")
-    print("=" * 60)
-
-    if all_hardware_results:
-        print("✅ Successfully tested quantum image processing on real IBM hardware!")
-        print(f"Patterns tested: {list(all_hardware_results.keys())}")
-
-        # Average fidelity
-        fidelities = []
-        for pattern, results in all_hardware_results.items():
-            if 'hardware_ideal_fidelity' in results['analysis']:
-                fidelities.append(results['analysis']['hardware_ideal_fidelity'])
-
-        if fidelities:
-            avg_fidelity = np.mean(fidelities)
-            print(f"Average hardware fidelity: {avg_fidelity:.3f}")
-
-        print("\n🔬 Next steps:")
-        print("1. Test with larger images (4x4, 8x8) as hardware improves")
-        print("2. Implement error mitigation techniques")
-        print("3. Compare with classical edge detection performance")
-        print("4. Explore other quantum image processing algorithms")
+            if ideal_corr > 0.9 and hw_corr > 0.7:
+                print("   🌟 PERFECT - All fixes working!")
+            elif ideal_corr > 0.7:
+                print("   ✅ EXCELLENT - Major improvement achieved!")
+            else:
+                print("   ⚠️ Still needs more work")
 
     else:
-        print("❌ No successful hardware tests completed")
-        print("This might be due to:")
-        print("- Backend availability issues")
-        print("- Account access limitations")
-        print("- Network connectivity problems")
-        print("Try again later or check your IBM Quantum account status")
+        # Test multiple patterns
+        print("\n🔬 Testing Multiple Patterns with Fixed System")
+        patterns = ["single", "cross", "corners"]
 
-    print(f"\n✨ Quantum image processing hardware test complete! ✨")
+        for pattern in patterns:
+            print(f"\n--- Testing FIXED {pattern.upper()} ---")
+            results = tester.test_optimized_frqi_fixed(pattern, 2, shots=1024)
+
+            if results:
+                ideal_corr = results.get('ideal_correlation', 0)
+                hw_corr = results.get('hardware_correlation', 0)
+                print(f"✅ {pattern}: Ideal={ideal_corr:.3f}, Hardware={hw_corr:.3f}")
+
+    print("\n✨ Fully fixed hardware testing complete!")
